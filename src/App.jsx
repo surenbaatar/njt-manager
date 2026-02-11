@@ -1146,7 +1146,8 @@ export default function ManagerPlatform() {
      FINANCE PAGE
      ═══════════════════════════════════════════ */
   if (page === "finance" && (isFinance || isAdmin)) {
-    const [finFilter, setFinFilter] = [null, ()=>{}]; // placeholder
+    const [finDestFilter, setFinDestFilter] = useState(null);
+    const [finTripFilter, setFinTripFilter] = useState(null);
     const fSearchQ = invSearchQ;
     const today = new Date().toISOString().split("T")[0];
 
@@ -1223,14 +1224,19 @@ export default function ManagerPlatform() {
     // Filter invoices
     const statusFilter = expandedInv; // reuse state for filter: "all" | "pending" | "partial" | "paid" | "overdue"
     const setStatusFilter = setExpandedInv;
-    const allInvs = [...invoices].sort((a, b) => (b.savedAt || "").localeCompare(a.savedAt || ""));
+    const allInvs = [...activeInvoices].sort((a, b) => (b.savedAt || "").localeCompare(a.savedAt || ""));
     const q = fSearchQ.toLowerCase().trim();
+    // Get unique destinations and trip codes for filter
+    const finDests = [...new Set(allInvs.map(i => i.dest).filter(Boolean))];
+    const finTripCodes = [...new Set(allInvs.map(i => i.tripCode).filter(Boolean))];
     let filtered = allInvs;
     if (q) {
       filtered = filtered.filter(inv =>
         (inv.clientName || "").toLowerCase().includes(q) ||
         (inv.clientPhone || "").includes(q) ||
+        (inv.tripCode || "").toLowerCase().includes(q) ||
         (inv.refCode || inv.txnValue || "").toLowerCase().includes(q) ||
+        (inv.destName || inv.dest || "").toLowerCase().includes(q) ||
         (inv.createdByLabel || inv.createdBy || "").toLowerCase().includes(q)
       );
     }
@@ -1242,11 +1248,13 @@ export default function ManagerPlatform() {
       if (i.installEnabled && i.installments?.length) return i.installments.some(inst => !inst.paid && inst.date && inst.date < today);
       return i.dueDate && i.dueDate < today && i.paymentStatus !== "paid";
     });
+    if (finDestFilter) filtered = filtered.filter(i => i.dest === finDestFilter);
+    if (finTripFilter) filtered = filtered.filter(i => i.tripCode === finTripFilter);
 
     // Stats
     const totalInvoiced = allInvs.reduce((s, i) => s + (i.total || 0), 0);
     const totalPaidAmt = allInvs.reduce((s, inv) => {
-      if (inv.payments?.length) return s + inv.payments.reduce((ss, p) => ss + p.amount, 0);
+      if (inv.payments?.length) return s + inv.payments.filter(p=>!p.reversed).reduce((ss, p) => ss + p.amount, 0);
       if (inv.paymentStatus === "paid") return s + inv.total;
       if (inv.installEnabled && inv.installments?.length) return s + inv.installments.filter(x => x.paid).reduce((ss, x) => ss + x.amount, 0);
       return s;
@@ -1312,19 +1320,35 @@ export default function ManagerPlatform() {
             )}
 
             {/* Search + Filter */}
-            <div className="fu" style={{display:"flex",gap:10,marginBottom:16,alignItems:"center",animationDelay:".12s"}}>
-              <input placeholder="🔍 Нэр, утас, код, гүйлгээний утга хайх..." value={invSearchQ} onChange={e=>setInvSearchQ(e.target.value)} style={{...inp,flex:1,borderRadius:20,padding:"10px 18px"}} />
-              <div style={{display:"flex",gap:4}}>
-                {[
-                  {v:null,l:"Бүгд",c:C.dark},
-                  {v:"pending",l:"Хүлээгдэж буй",c:C.orange},
-                  {v:"partial",l:"Хэсэгчлэн",c:C.blue},
-                  {v:"paid",l:"Төлсөн",c:"#059669"},
-                  {v:"overdue",l:"🔴 Хугацаа хэтэрсэн",c:C.red},
-                ].map(f => (
-                  <button key={f.l} onClick={()=>setStatusFilter(f.v)} style={{padding:"7px 14px",background:statusFilter===f.v?f.c:"#fff",color:statusFilter===f.v?"#fff":f.c,border:`1.5px solid ${statusFilter===f.v?f.c:C.border}`,borderRadius:20,cursor:"pointer",fontFamily:"'Outfit'",fontWeight:statusFilter===f.v?700:500,fontSize:11,transition:"all .15s",whiteSpace:"nowrap"}}>{f.l}</button>
-                ))}
-              </div>
+            <div className="fu" style={{display:"flex",gap:10,marginBottom:10,alignItems:"center",animationDelay:".12s",flexWrap:"wrap"}}>
+              <input placeholder="🔍 Нэр, утас, код, чиглэл хайх..." value={invSearchQ} onChange={e=>setInvSearchQ(e.target.value)} style={{...inp,flex:1,minWidth:200,borderRadius:20,padding:"10px 18px"}} />
+              <select value={finDestFilter||""} onChange={e=>{ setFinDestFilter(e.target.value||null); setFinTripFilter(null); }} style={{...inp,borderRadius:20,padding:"8px 14px",fontSize:12,minWidth:120}}>
+                <option value="">📍 Бүх чиглэл</option>
+                {finDests.map(d => <option key={d} value={d}>{destCodes[d]?.name || d}</option>)}
+              </select>
+              {finDestFilter && (() => {
+                const tripCodes = finTripCodes.filter(tc => tc.startsWith(finDestFilter));
+                return tripCodes.length > 0 ? (
+                  <select value={finTripFilter||""} onChange={e=>setFinTripFilter(e.target.value||null)} style={{...inp,borderRadius:20,padding:"8px 14px",fontSize:12,minWidth:160}}>
+                    <option value="">Бүх аялал</option>
+                    {tripCodes.map(tc => <option key={tc} value={tc}>{tc}</option>)}
+                  </select>
+                ) : null;
+              })()}
+            </div>
+            <div className="fu" style={{display:"flex",gap:4,marginBottom:16,animationDelay:".14s",flexWrap:"wrap"}}>
+              {[
+                {v:null,l:"Бүгд",c:C.dark},
+                {v:"pending",l:"Хүлээгдэж буй",c:C.orange},
+                {v:"partial",l:"Хэсэгчлэн",c:C.blue},
+                {v:"paid",l:"Төлсөн",c:"#059669"},
+                {v:"overdue",l:"🔴 Хугацаа хэтэрсэн",c:C.red},
+              ].map(f => (
+                <button key={f.l} onClick={()=>setStatusFilter(f.v)} style={{padding:"7px 14px",background:statusFilter===f.v?f.c:"#fff",color:statusFilter===f.v?"#fff":f.c,border:`1.5px solid ${statusFilter===f.v?f.c:C.border}`,borderRadius:20,cursor:"pointer",fontFamily:"'Outfit'",fontWeight:statusFilter===f.v?700:500,fontSize:11,transition:"all .15s",whiteSpace:"nowrap"}}>{f.l}</button>
+              ))}
+              {(finDestFilter || finTripFilter || statusFilter) && (
+                <button onClick={()=>{setFinDestFilter(null);setFinTripFilter(null);setStatusFilter(null);setInvSearchQ("")}} style={{padding:"7px 14px",background:"#F3F4F6",color:C.muted,border:`1px solid ${C.border}`,borderRadius:20,cursor:"pointer",fontFamily:"'Outfit'",fontWeight:500,fontSize:11}}>✕ Цэвэрлэх</button>
+              )}
             </div>
 
             {/* Invoice list */}
