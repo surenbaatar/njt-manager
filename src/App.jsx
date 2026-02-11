@@ -130,6 +130,8 @@ export default function ManagerPlatform() {
   // Edit invoice
   const [editingInvoice, setEditingInvoice] = useState(null);
   const [invSearchQ, setInvSearchQ] = useState("");
+  const [finDestFilter, setFinDestFilter] = useState(null);
+  const [finTripFilter, setFinTripFilter] = useState(null);
   const [expandedInv, setExpandedInv] = useState(null);
   const [analyticsYear, setAnalyticsYear] = useState(new Date().getFullYear());
   const [analyticsView, setAnalyticsView] = useState("monthly"); // "monthly" | "destination" | "yearly"
@@ -466,8 +468,10 @@ export default function ManagerPlatform() {
 
   // ── Analytics computations ──
   const MONTHS = ["1-р сар","2-р сар","3-р сар","4-р сар","5-р сар","6-р сар","7-р сар","8-р сар","9-р сар","10-р сар","11-р сар","12-р сар"];
-  const availableYears = [...new Set(trips.map(t => new Date(t.date).getFullYear()))].sort((a,b)=>b-a);
-  if (!availableYears.includes(analyticsYear) && availableYears.length) setAnalyticsYear(availableYears[0]);
+  const availableYears = [...new Set(activeTrips.map(t => new Date(t.date).getFullYear()))].sort((a,b)=>b-a);
+  useEffect(() => {
+    if (!availableYears.includes(analyticsYear) && availableYears.length) setAnalyticsYear(availableYears[0]);
+  }, [availableYears.join(",")]);
 
   const yearTrips = activeTrips.filter(t => new Date(t.date).getFullYear() === analyticsYear);
   const yearInvoices = activeInvoices.filter(inv => {
@@ -1146,8 +1150,6 @@ export default function ManagerPlatform() {
      FINANCE PAGE
      ═══════════════════════════════════════════ */
   if (page === "finance" && (isFinance || isAdmin)) {
-    const [finDestFilter, setFinDestFilter] = useState(null);
-    const [finTripFilter, setFinTripFilter] = useState(null);
     const fSearchQ = invSearchQ;
     const today = new Date().toISOString().split("T")[0];
 
