@@ -505,6 +505,7 @@ export default function ManagerPlatform() {
   notifications.sort((a,b) => (a.days - b.days));
 
   const getPaidAmount = (inv) => {
+    if (inv.payments?.length) return inv.payments.filter(p=>!p.reversed).reduce((s,p)=>s+p.amount,0);
     if (inv.paymentStatus === "paid") return inv.total || 0;
     if (inv.installEnabled && inv.installments?.length) return inv.installments.filter(x=>x.paid).reduce((s,x)=>s+x.amount,0);
     return 0;
@@ -1115,7 +1116,7 @@ export default function ManagerPlatform() {
               {overdueInvs.length === 0 && <div style={{padding:40,textAlign:"center",color:C.light,fontSize:13}}>Хугацаа хэтэрсэн төлбөр алга ✓</div>}
               {overdueInvs.map((inv,i) => {
                 const trip = trips.find(t=>t.code===inv.tripCode);
-                const paidAmt = inv.payments?.length ? inv.payments.reduce((s,p)=>s+p.amount,0) : (inv.installEnabled && inv.installments?.length ? inv.installments.filter(x=>x.paid).reduce((s,x)=>s+x.amount,0) : (inv.paymentStatus==="paid"?inv.total:0));
+                const paidAmt = inv.payments?.length ? inv.payments.filter(p=>!p.reversed).reduce((s,p)=>s+p.amount,0) : (inv.installEnabled && inv.installments?.length ? inv.installments.filter(x=>x.paid).reduce((s,x)=>s+x.amount,0) : (inv.paymentStatus==="paid"?inv.total:0));
                 const overdueDays = inv.dueDate ? Math.floor((new Date()-new Date(inv.dueDate))/(1000*60*60*24)) : 0;
                 return (
                   <div key={inv.id} className="fu" style={{background:"#fff",borderRadius:14,border:`1px solid ${C.redBd}`,padding:"16px 20px",marginBottom:8,animationDelay:`${i*0.04}s`,cursor:"pointer"}} onClick={()=>{setSelectedTrip(trip);setPage("trip-detail")}}>
@@ -1188,6 +1189,35 @@ export default function ManagerPlatform() {
       try { await saveInv(updated); } catch(e) {}
       setInvoices(prev => prev.map(i => i.id === inv.id ? updated : i));
       setSaveMsg("✓ Төлбөр бүртгэгдлээ!"); setTimeout(() => setSaveMsg(""), 3000);
+    };
+
+    const reversePayment = async (inv, payIdx) => {
+      if (!isFinance && !isAdmin) { setSaveMsg("⚠ Зөвхөн санхүүгийн менежер төлбөр буцаах эрхтэй"); setTimeout(()=>setSaveMsg(""),3000); return; }
+      const p = inv.payments[payIdx];
+      if (!window.confirm(`${fmt(p.amount)} төлбөрийг буцаах уу?`)) return;
+      const updated = { ...inv };
+      // Mark payment as reversed, keep in history
+      updated.payments = [...inv.payments];
+      updated.payments[payIdx] = { ...p, reversed: true, reversedAt: new Date().toISOString(), reversedBy: currentUser.username, reversedByLabel: currentUser.label };
+      // Recalculate from non-reversed payments
+      const activePmts = updated.payments.filter(pm => !pm.reversed);
+      const totalPaid = activePmts.reduce((s, pm) => s + pm.amount, 0);
+      if (totalPaid >= updated.total) { updated.paymentStatus = "paid"; }
+      else if (totalPaid > 0) { updated.paymentStatus = "partial"; }
+      else { updated.paymentStatus = "pending"; }
+      // Recalc installments
+      if (updated.installEnabled && updated.installments?.length) {
+        let remaining = totalPaid;
+        updated.installments.forEach(inst => {
+          if (remaining >= inst.amount) { inst.paid = true; remaining -= inst.amount; }
+          else { inst.paid = false; inst.paidDate = null; }
+        });
+      }
+      const editHistory = [...(updated.editHistory || []), { date: new Date().toISOString(), changes: [`Төлбөр буцаав: ${fmt(p.amount)} (${currentUser.label})`] }];
+      updated.editHistory = editHistory;
+      try { await saveInv(updated); } catch(e) {}
+      setInvoices(prev => prev.map(i => i.id === inv.id ? updated : i));
+      setSaveMsg("✓ Төлбөр буцаагдлаа"); setTimeout(() => setSaveMsg(""), 3000);
     };
 
     // Filter invoices
@@ -1309,7 +1339,7 @@ export default function ManagerPlatform() {
               </div>
               {filtered.length === 0 && <div style={{padding:30,textAlign:"center",color:C.light,fontSize:12}}>Олдсонгүй</div>}
               {filtered.map((inv, i) => {
-                const paidAmt = inv.payments?.length ? inv.payments.reduce((s, p) => s + p.amount, 0) : (inv.installEnabled && inv.installments?.length ? inv.installments.filter(x => x.paid).reduce((s, x) => s + x.amount, 0) : (inv.paymentStatus === "paid" ? inv.total : 0));
+                const paidAmt = inv.payments?.length ? inv.payments.filter(p=>!p.reversed).reduce((s, p) => s + p.amount, 0) : (inv.installEnabled && inv.installments?.length ? inv.installments.filter(x => x.paid).reduce((s, x) => s + x.amount, 0) : (inv.paymentStatus === "paid" ? inv.total : 0));
                 const outstanding = inv.total - paidAmt;
                 const isExp = selectedInvoice?.id === inv.id;
                 const isOverdue = inv.paymentStatus !== "paid" && ((inv.dueDate && inv.dueDate < today) || (inv.installEnabled && inv.installments?.some(inst => !inst.paid && inst.date && inst.date < today)));
@@ -1429,13 +1459,18 @@ export default function ManagerPlatform() {
                               <div style={{padding:"10px 12px",background:"#fff",borderRadius:10,border:`1px solid ${C.border}`}}>
                                 <div style={{fontSize:9,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase",color:C.light,marginBottom:6}}>ТӨЛБӨРИЙН ТҮҮХ</div>
                                 {inv.payments.map((p, idx) => (
-                                  <div key={idx} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",fontSize:11,borderBottom:idx < inv.payments.length - 1 ? `1px solid ${C.border}33` : "none"}}>
+                                  <div key={idx} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",fontSize:11,borderBottom:idx < inv.payments.length - 1 ? `1px solid ${C.border}33` : "none",opacity:p.reversed?0.5:1}}>
                                     <div>
                                       <span style={{color:C.muted}}>{new Date(p.date).toLocaleDateString("mn")}</span>
-                                      <span style={{marginLeft:8,color:"#059669",fontWeight:600}}>{p.byLabel || p.by}</span>
+                                      <span style={{marginLeft:8,color:p.reversed?"#991B1B":"#059669",fontWeight:600}}>{p.byLabel || p.by}</span>
                                       {p.note && <span style={{marginLeft:8,color:C.muted,fontSize:10}}>({p.note})</span>}
+                                      {p.reversed && <span style={{marginLeft:6,fontSize:9,padding:"1px 6px",borderRadius:6,background:"#FEE2E2",color:C.red,fontWeight:700}}>БУЦААСАН</span>}
+                                      {p.reversed && <span style={{marginLeft:4,color:C.muted,fontSize:9}}>({p.reversedByLabel} · {new Date(p.reversedAt).toLocaleDateString("mn")})</span>}
                                     </div>
-                                    <span style={{fontWeight:700,color:"#059669"}}>+{fmt(p.amount)}</span>
+                                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                                      <span style={{fontWeight:700,color:p.reversed?C.red:"#059669",textDecoration:p.reversed?"line-through":"none"}}>{p.reversed?"-":"+"}{fmt(p.amount)}</span>
+                                      {!p.reversed && <button onClick={()=>reversePayment(inv,idx)} title="Буцаах" style={{width:22,height:22,background:"#FEE2E2",color:C.red,border:"none",borderRadius:5,cursor:"pointer",fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>↩</button>}
+                                    </div>
                                   </div>
                                 ))}
                                 <div style={{marginTop:6,paddingTop:6,borderTop:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",fontSize:11,fontWeight:700}}>
@@ -2488,7 +2523,7 @@ export default function ManagerPlatform() {
                   </div>
                   {filtered.length === 0 && <div style={{padding:30,textAlign:"center",color:C.light,fontSize:12}}>Олдсонгүй</div>}
                   {filtered.map((inv, i) => {
-                    const paidAmt = inv.payments?.length ? inv.payments.reduce((ss,p)=>ss+p.amount,0) : (inv.installEnabled && inv.installments?.length ? inv.installments.filter(x=>x.paid).reduce((ss,x)=>ss+x.amount,0) : (inv.paymentStatus==="paid"?inv.total:0));
+                    const paidAmt = inv.payments?.length ? inv.payments.filter(p=>!p.reversed).reduce((ss,p)=>ss+p.amount,0) : (inv.installEnabled && inv.installments?.length ? inv.installments.filter(x=>x.paid).reduce((ss,x)=>ss+x.amount,0) : (inv.paymentStatus==="paid"?inv.total:0));
                     const hasInfant = inv.isInfant || inv.items?.some(x=>x.type==="infant"||x.isInfant);
                     const mainType = inv.items?.[0]?.type || inv.invType || "package";
                     const typeInfo = {flight:{l:"🛫",c:C.blue},ground:{l:"🏨",c:C.orange},package:{l:"📦",c:C.wine},infant:{l:"👶",c:"#D97706"}};
@@ -2556,9 +2591,9 @@ export default function ManagerPlatform() {
                             {/* Payment summary + history (read-only) */}
                             {(() => {
                               const pmts = inv.payments || [];
-                              const paidTotal = pmts.reduce((s,p) => s + p.amount, 0);
+                              const paidTotal = pmts.filter(p=>!p.reversed).reduce((s,p) => s + p.amount, 0);
                               const ost = inv.total - paidTotal;
-                              if (paidTotal === 0 && !inv.installEnabled) return null;
+                              if (paidTotal === 0 && !inv.installEnabled && pmts.length === 0) return null;
                               return (
                                 <div style={{marginTop:8,padding:"8px 10px",background:paidTotal >= inv.total ? "#ECFDF5" : "#FFF7ED",borderRadius:8,border:`1px solid ${paidTotal >= inv.total ? "#A7F3D0" : "#FED7AA"}`}}>
                                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:pmts.length > 0 ? 6 : 0}}>
@@ -2577,12 +2612,13 @@ export default function ManagerPlatform() {
                                     </div>
                                   )}
                                   {pmts.length > 0 && pmts.map((p,idx) => (
-                                    <div key={idx} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"3px 0",fontSize:10,borderTop:idx===0?`1px solid ${C.border}33`:"none"}}>
+                                    <div key={idx} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"3px 0",fontSize:10,borderTop:idx===0?`1px solid ${C.border}33`:"none",opacity:p.reversed?0.5:1}}>
                                       <div style={{color:C.muted}}>
-                                        {new Date(p.date).toLocaleDateString("mn")} <span style={{color:"#059669",fontWeight:600}}>{p.byLabel||p.by}</span>
+                                        {new Date(p.date).toLocaleDateString("mn")} <span style={{color:p.reversed?C.red:"#059669",fontWeight:600}}>{p.byLabel||p.by}</span>
                                         {p.note && <span style={{marginLeft:4,opacity:.7}}>({p.note})</span>}
+                                        {p.reversed && <span style={{marginLeft:4,fontSize:8,padding:"1px 4px",borderRadius:4,background:"#FEE2E2",color:C.red,fontWeight:700}}>БУЦААСАН</span>}
                                       </div>
-                                      <span style={{fontWeight:700,color:"#059669"}}>+{fmt(p.amount)}</span>
+                                      <span style={{fontWeight:700,color:p.reversed?C.red:"#059669",textDecoration:p.reversed?"line-through":"none"}}>{p.reversed?"-":"+"}{fmt(p.amount)}</span>
                                     </div>
                                   ))}
                                 </div>
