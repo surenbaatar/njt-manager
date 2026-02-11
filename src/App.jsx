@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 
 /* ═══ Supabase Client ═══ */
 const supabase = createClient(
@@ -117,7 +117,7 @@ export default function ManagerPlatform() {
     else { setLoginError("Хэрэглэгч нэр эсвэл нууц үг буруу"); }
   };
 
-  const [page, setPage] = useState("trips"); // "trips" | "dest-trips" | "trip-detail" | "new-invoice" | "analytics" | "settings" | "pdf-preview"
+  const [page, setPage] = useState("trips"); // "trips" | "dest-trips" | "trip-detail" | "new-invoice" | "analytics" | "settings" | "pdf-preview" | "recycle"
   const [trips, setTrips] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -264,6 +264,59 @@ export default function ManagerPlatform() {
     return true;
   };
 
+  const deleteTrip = async (trip) => {
+    const invs = invoices.filter(i => i.tripCode === trip.code);
+    const hasPaid = invs.some(i => i.paymentStatus === "paid" || (i.payments?.length > 0) || (i.installments?.some(x => x.paid)));
+    if (hasPaid) { setSaveMsg("⚠ Төлбөр төлөгдсөн нэхэмжлэлтэй аялал устгах боломжгүй!"); setTimeout(()=>setSaveMsg(""),4000); return; }
+    const msg = invs.length > 0
+      ? `"${trip.code}" аялал болон ${invs.length} нэхэмжлэл хогийн савруу зөөгдөнө. Устгах уу?`
+      : `"${trip.code}" аялал хогийн савруу зөөх үү?`;
+    if (!window.confirm(msg)) return;
+    try {
+      const now = new Date().toISOString();
+      // Soft delete all invoices
+      for (const inv of invs) {
+        const upd = { ...inv, deleted: true, deletedAt: now, deletedBy: currentUser.username };
+        await saveInv(upd);
+        setInvoices(prev => prev.map(i => i.id === inv.id ? upd : i));
+      }
+      // Soft delete trip
+      const updTrip = { ...trip, deleted: true, deletedAt: now, deletedBy: currentUser.username };
+      await saveTrip(updTrip);
+      setTrips(prev => prev.map(t => t.code === trip.code ? updTrip : t));
+      setSelectedTrip(null);
+      setPage("trips");
+      setSaveMsg("✓ Хогийн саванд зөөгдлөө"); setTimeout(()=>setSaveMsg(""),3000);
+    } catch(e) { setSaveMsg("⚠ Алдаа: " + e.message); setTimeout(()=>setSaveMsg(""),5000); }
+  };
+
+  const restoreTrip = async (trip) => {
+    try {
+      const invs = invoices.filter(i => i.tripCode === trip.code && i.deleted);
+      for (const inv of invs) {
+        const upd = { ...inv, deleted: false, deletedAt: null, deletedBy: null };
+        await saveInv(upd);
+        setInvoices(prev => prev.map(i => i.id === inv.id ? upd : i));
+      }
+      const updTrip = { ...trip, deleted: false, deletedAt: null, deletedBy: null };
+      await saveTrip(updTrip);
+      setTrips(prev => prev.map(t => t.code === trip.code ? updTrip : t));
+      setSaveMsg("✓ Аялал сэргээгдлээ!"); setTimeout(()=>setSaveMsg(""),3000);
+    } catch(e) { setSaveMsg("⚠ Алдаа: " + e.message); setTimeout(()=>setSaveMsg(""),5000); }
+  };
+
+  const permanentDeleteTrip = async (trip) => {
+    if (!window.confirm(`"${trip.code}" бүрмөсөн устгах уу? Дахин сэргээх боломжгүй!`)) return;
+    try {
+      const invs = invoices.filter(i => i.tripCode === trip.code);
+      for (const inv of invs) { await supabase.from("invoices").delete().eq("id", inv.id); }
+      await supabase.from("trips").delete().eq("code", trip.code);
+      setInvoices(prev => prev.filter(i => i.tripCode !== trip.code));
+      setTrips(prev => prev.filter(t => t.code !== trip.code));
+      setSaveMsg("✓ Бүрмөсөн устгагдлаа"); setTimeout(()=>setSaveMsg(""),3000);
+    } catch(e) { setSaveMsg("⚠ Алдаа: " + e.message); setTimeout(()=>setSaveMsg(""),5000); }
+  };
+
   const saveTrip = async (trip) => {
     try {
       await supabase.from("trips").upsert({
@@ -360,37 +413,13 @@ export default function ManagerPlatform() {
   useEffect(() => { loadAll(); loadUsers(); }, []);
 
   // ── Seed test data ──
-  const seedTestData = async () => {
-    // 3 trips
-    const testTrips = [
-      { code: "SYX-26030101", dest: "SYX", destName: "Хайнан", date: "2026-03-01", seq: 1, bank: "Хаан банк", createdAt: "2026-02-01T10:00:00Z", createdBy: "booking", createdByLabel: "Дамбадорж" },
-      { code: "PQC-26031501", dest: "PQC", destName: "Фукок", date: "2026-03-15", seq: 1, bank: "Худалдаа хөгжлийн банк", createdAt: "2026-02-03T10:00:00Z", createdBy: "booking", createdByLabel: "Гэрэлээ" },
-      { code: "JAP-26040101", dest: "JAP", destName: "Япон", date: "2026-04-01", seq: 1, bank: "М Банк", createdAt: "2026-02-05T10:00:00Z", createdBy: "manager", createdByLabel: "Менежер" },
-    ];
-    const testInvoices = [
-      { id:"syx26030101-01", refCode:"syx26030101-01", tripCode:"SYX-26030101", dest:"SYX", destName:"Хайнан", invDate:"2026-02-01", dueDate:"2026-02-20", clientName:"Батболд", clientPhone:"99112233", bankName:"Хаан банк", bankIban:"5000123456", items:[{description:"Хайнан багц аялал",qty:2,rate:850000,type:"package"}], total:1700000, notes:"", installEnabled:true, installments:[{label:"1-р төлбөр",amount:850000,pct:50,date:"2026-02-10",paid:false},{label:"2-р төлбөр",amount:850000,pct:50,date:"2026-02-25",paid:false}], txnValue:"syx26030101-01 / Батболд / 99112233", savedAt:"2026-02-01T10:00:00Z", paymentStatus:"pending", createdBy:"booking", createdByLabel:"Дамбадорж" },
-      { id:"syx26030101-02", refCode:"syx26030101-02", tripCode:"SYX-26030101", dest:"SYX", destName:"Хайнан", invDate:"2026-02-02", dueDate:"2026-02-20", clientName:"Сарантуяа", clientPhone:"88001122", bankName:"Хаан банк", bankIban:"5000123456", items:[{description:"Хайнан багц аялал",qty:1,rate:850000,type:"package"},{description:"Нялх хүүхэд",qty:1,rate:150000,type:"infant"}], total:1000000, notes:"Нялх хүүхэдтэй", installEnabled:false, installments:[], txnValue:"syx26030101-02 / Сарантуяа / 88001122", savedAt:"2026-02-02T10:00:00Z", paymentStatus:"pending", createdBy:"booking", createdByLabel:"Дамбадорж" },
-      { id:"syx26030101-03", refCode:"syx26030101-03", tripCode:"SYX-26030101", dest:"SYX", destName:"Хайнан", invDate:"2026-02-03", dueDate:"2026-02-28", clientName:"Ганзориг", clientPhone:"95553344", bankName:"Хаан банк", bankIban:"5000123456", items:[{description:"Хайнан нислэг",qty:1,rate:650000,type:"flight"}], total:650000, notes:"", installEnabled:false, installments:[], txnValue:"syx26030101-03 / Ганзориг / 95553344", savedAt:"2026-02-03T10:00:00Z", paymentStatus:"paid", createdBy:"booking", createdByLabel:"Гэрэлээ", payments:[{date:"2026-02-05T10:00:00Z",amount:650000,by:"finance",byLabel:"Санхүүгийн менежер",note:"Хаан банк шилжүүлэг"}] },
-      { id:"pqc26031501-01", refCode:"pqc26031501-01", tripCode:"PQC-26031501", dest:"PQC", destName:"Фукок", invDate:"2026-02-03", dueDate:"2026-02-25", clientName:"Мөнхбат", clientPhone:"99887766", bankName:"Худалдаа хөгжлийн банк", bankIban:"4500987654", items:[{description:"Фукок багц аялал",qty:3,rate:750000,type:"package"}], total:2250000, notes:"3 хүний бүлэг", installEnabled:true, installments:[{label:"1-р төлбөр",amount:1125000,pct:50,date:"2026-02-10",paid:true,paidDate:"2026-02-09T10:00:00Z"},{label:"2-р төлбөр",amount:1125000,pct:50,date:"2026-03-01",paid:false}], txnValue:"pqc26031501-01 / Мөнхбат / 99887766", savedAt:"2026-02-03T11:00:00Z", paymentStatus:"partial", createdBy:"booking", createdByLabel:"Гэрэлээ", payments:[{date:"2026-02-09T10:00:00Z",amount:1125000,by:"finance",byLabel:"Санхүүгийн менежер",note:"1-р төлбөр баталгаажсан"}] },
-      { id:"pqc26031501-02", refCode:"pqc26031501-02", tripCode:"PQC-26031501", dest:"PQC", destName:"Фукок", invDate:"2026-02-04", dueDate:"2026-02-20", clientName:"Оюунцэцэг", clientPhone:"80112233", bankName:"Худалдаа хөгжлийн банк", bankIban:"4500987654", items:[{description:"Фукок багц аялал",qty:2,rate:750000,type:"package"}], total:1500000, notes:"", installEnabled:true, installments:[{label:"1-р төлбөр",amount:500000,pct:33,date:"2026-02-08",paid:true,paidDate:"2026-02-08T10:00:00Z"},{label:"2-р төлбөр",amount:500000,pct:33,date:"2026-02-15",paid:false},{label:"3-р төлбөр",amount:500000,pct:34,date:"2026-02-25",paid:false}], txnValue:"pqc26031501-02 / Оюунцэцэг / 80112233", savedAt:"2026-02-04T10:00:00Z", paymentStatus:"partial", createdBy:"booking", createdByLabel:"Дамбадорж", payments:[{date:"2026-02-08T10:00:00Z",amount:500000,by:"finance",byLabel:"Санхүүгийн менежер",note:""}] },
-      { id:"pqc26031501-03", refCode:"pqc26031501-03", tripCode:"PQC-26031501", dest:"PQC", destName:"Фукок", invDate:"2026-02-05", dueDate:"2026-03-01", clientName:"Тэмүүлэн", clientPhone:"99443322", bankName:"Худалдаа хөгжлийн банк", bankIban:"4500987654", items:[{description:"Фукок газрын үйлчилгээ",qty:1,rate:350000,type:"ground"}], total:350000, notes:"Зөвхөн газрын үйлчилгээ", installEnabled:false, installments:[], txnValue:"pqc26031501-03 / Тэмүүлэн / 99443322", savedAt:"2026-02-05T10:00:00Z", paymentStatus:"pending", createdBy:"booking", createdByLabel:"Гэрэлээ" },
-      { id:"jap26040101-01", refCode:"jap26040101-01", tripCode:"JAP-26040101", dest:"JAP", destName:"Япон", invDate:"2026-02-05", dueDate:"2026-03-15", clientName:"Эрдэнэбат", clientPhone:"99001122", bankName:"М Банк", bankIban:"6200112233", items:[{description:"Япон багц аялал",qty:2,rate:1200000,type:"package"}], total:2400000, notes:"", installEnabled:true, installments:[{label:"1-р төлбөр",amount:800000,pct:33,date:"2026-02-15",paid:false},{label:"2-р төлбөр",amount:800000,pct:33,date:"2026-03-01",paid:false},{label:"3-р төлбөр",amount:800000,pct:34,date:"2026-03-15",paid:false}], txnValue:"jap26040101-01 / Эрдэнэбат / 99001122", savedAt:"2026-02-05T12:00:00Z", paymentStatus:"pending", createdBy:"booking", createdByLabel:"Дамбадорж" },
-      { id:"jap26040101-02", refCode:"jap26040101-02", tripCode:"JAP-26040101", dest:"JAP", destName:"Япон", invDate:"2026-02-06", dueDate:"2026-03-10", clientName:"Болормаа", clientPhone:"88776655", bankName:"М Банк", bankIban:"6200112233", items:[{description:"Япон нислэг",qty:1,rate:900000,type:"flight"},{description:"Япон газрын үйлчилгээ",qty:1,rate:500000,type:"ground"}], total:1400000, notes:"Нислэг + газар тус тусдаа", installEnabled:false, installments:[], txnValue:"jap26040101-02 / Болормаа / 88776655", savedAt:"2026-02-06T10:00:00Z", paymentStatus:"paid", createdBy:"booking", createdByLabel:"Гэрэлээ", payments:[{date:"2026-02-07T10:00:00Z",amount:1400000,by:"finance",byLabel:"Санхүүгийн менежер",note:"Бүрэн төлбөр М Банк"}] },
-      { id:"jap26040101-03", refCode:"jap26040101-03", tripCode:"JAP-26040101", dest:"JAP", destName:"Япон", invDate:"2026-02-07", dueDate:"2026-02-08", clientName:"Нарантуяа", clientPhone:"95001100", bankName:"М Банк", bankIban:"6200112233", items:[{description:"Япон багц аялал",qty:1,rate:1200000,type:"package"}], total:1200000, notes:"Хугацаа богино", installEnabled:false, installments:[], txnValue:"jap26040101-03 / Нарантуяа / 95001100", savedAt:"2026-02-07T10:00:00Z", paymentStatus:"pending", createdBy:"booking", createdByLabel:"Дамбадорж" },
-      { id:"syx26030101-04", refCode:"syx26030101-04", tripCode:"SYX-26030101", dest:"SYX", destName:"Хайнан", invDate:"2026-02-08", dueDate:"2026-02-09", clientName:"Дэлгэрмаа", clientPhone:"99667788", bankName:"Хаан банк", bankIban:"5000123456", items:[{description:"Хайнан багц аялал",qty:1,rate:850000,type:"package"},{description:"Хайнан нислэг нэмэлт",qty:1,rate:200000,type:"flight"}], total:1050000, notes:"", installEnabled:true, installments:[{label:"1-р төлбөр",amount:525000,pct:50,date:"2026-02-09",paid:false},{label:"2-р төлбөр",amount:525000,pct:50,date:"2026-02-20",paid:false}], txnValue:"syx26030101-04 / Дэлгэрмаа / 99667788", savedAt:"2026-02-08T10:00:00Z", paymentStatus:"pending", createdBy:"booking", createdByLabel:"Гэрэлээ" },
-    ];
-    for (const t of testTrips) {
-      try { await saveTrip(t); } catch(e) {}
-    }
-    for (const inv of testInvoices) {
-      try { await saveInv(inv); } catch(e) {}
-    }
-    await loadAll();
-    setSaveMsg("✓ 10 тест нэхэмжлэл нэмэгдлээ!"); setTimeout(()=>setSaveMsg(""),3000);
-  };
 
   // ── Computed ──
-  const tripInvoices = (code) => invoices.filter(i => i.tripCode === code);
+  const activeTrips = trips.filter(t => !t.deleted);
+  const activeInvoices = invoices.filter(i => !i.deleted);
+  const deletedTrips = trips.filter(t => t.deleted);
+  const deletedInvoices = invoices.filter(i => i.deleted && !deletedTrips.some(dt => dt.code === i.tripCode));
+  const tripInvoices = (code) => activeInvoices.filter(i => i.tripCode === code);
   const tripStats = (code) => {
     const invs = tripInvoices(code);
     const total = invs.reduce((s, i) => s + (i.total || 0), 0);
@@ -446,9 +475,9 @@ export default function ManagerPlatform() {
   const availableYears = [...new Set(trips.map(t => new Date(t.date).getFullYear()))].sort((a,b)=>b-a);
   if (!availableYears.includes(analyticsYear) && availableYears.length) setAnalyticsYear(availableYears[0]);
 
-  const yearTrips = trips.filter(t => new Date(t.date).getFullYear() === analyticsYear);
-  const yearInvoices = invoices.filter(inv => {
-    const trip = trips.find(t => t.code === inv.tripCode);
+  const yearTrips = activeTrips.filter(t => new Date(t.date).getFullYear() === analyticsYear);
+  const yearInvoices = activeInvoices.filter(inv => {
+    const trip = activeTrips.find(t => t.code === inv.tripCode);
     return trip && new Date(trip.date).getFullYear() === analyticsYear;
   });
 
@@ -661,8 +690,9 @@ export default function ManagerPlatform() {
     setTimeout(()=>setSaveMsg(""),3000);
   };
 
-  // ── Toggle installment paid ──
+  // ── Toggle installment paid (Finance & Manager only) ──
   const toggleInstallmentPaid = async (inv, instIdx) => {
+    if (!isFinance && !isManager) { setSaveMsg("⚠ Зөвхөн санхүүгийн менежер төлбөр бүртгэх эрхтэй"); setTimeout(()=>setSaveMsg(""),3000); return; }
     const updated = { ...inv };
     const inst = [...(updated.installments || [])];
     inst[instIdx] = { ...inst[instIdx], paid: !inst[instIdx].paid, paidDate: !inst[instIdx].paid ? new Date().toISOString() : null };
@@ -680,8 +710,9 @@ export default function ManagerPlatform() {
     setTimeout(()=>setSaveMsg(""),3000);
   };
 
-  // ── Toggle full payment (non-installment) ──
+  // ── Toggle full payment (Finance & Manager only) ──
   const toggleFullPayment = async (inv) => {
+    if (!isFinance && !isManager) { setSaveMsg("⚠ Зөвхөн санхүүгийн менежер төлбөр бүртгэх эрхтэй"); setTimeout(()=>setSaveMsg(""),3000); return; }
     const updated = { ...inv };
     const newStatus = inv.paymentStatus === "paid" ? "pending" : "paid";
     updated.paymentStatus = newStatus;
@@ -697,11 +728,32 @@ export default function ManagerPlatform() {
 
   // ── Delete invoice (Manager only) ──
   const deleteInvoice = async (inv) => {
-    if (!window.confirm(`"${inv.clientName}" нэхэмжлэл устгах уу?`)) return;
+    if (!window.confirm(`"${inv.clientName}" нэхэмжлэл хогийн савруу зөөх үү?`)) return;
+    try {
+      const upd = { ...inv, deleted: true, deletedAt: new Date().toISOString(), deletedBy: currentUser.username };
+      await saveInv(upd);
+      setInvoices(prev => prev.map(i => i.id === inv.id ? upd : i));
+      setSaveMsg("✓ Хогийн саванд зөөгдлөө");
+    } catch(e) { setSaveMsg("⚠ Алдаа: " + e.message); }
+    setTimeout(()=>setSaveMsg(""),3000);
+  };
+
+  const restoreInvoice = async (inv) => {
+    try {
+      const upd = { ...inv, deleted: false, deletedAt: null, deletedBy: null };
+      await saveInv(upd);
+      setInvoices(prev => prev.map(i => i.id === inv.id ? upd : i));
+      setSaveMsg("✓ Нэхэмжлэл сэргээгдлээ!");
+    } catch(e) { setSaveMsg("⚠ Алдаа: " + e.message); }
+    setTimeout(()=>setSaveMsg(""),3000);
+  };
+
+  const permanentDeleteInvoice = async (inv) => {
+    if (!window.confirm(`"${inv.clientName}" бүрмөсөн устгах уу?`)) return;
     try {
       await supabase.from("invoices").delete().eq("id", inv.id);
       setInvoices(prev => prev.filter(i => i.id !== inv.id));
-      setSaveMsg("✓ Нэхэмжлэл устгагдлаа");
+      setSaveMsg("✓ Бүрмөсөн устгагдлаа");
     } catch(e) { setSaveMsg("⚠ Алдаа: " + e.message); }
     setTimeout(()=>setSaveMsg(""),3000);
   };
@@ -1104,6 +1156,7 @@ export default function ManagerPlatform() {
 
     // Payment recording
     const recordPayment = async (inv, amount, note) => {
+      if (!isFinance && !isManager) { setSaveMsg("⚠ Зөвхөн санхүүгийн менежер төлбөр бүртгэх эрхтэй"); setTimeout(()=>setSaveMsg(""),3000); return; }
       if (!amount || amount <= 0) return;
       const payment = {
         date: new Date().toISOString(),
@@ -1198,7 +1251,7 @@ export default function ManagerPlatform() {
               <span style={{fontSize:9,padding:"2px 8px",borderRadius:10,background:"#059669",color:"#fff",fontWeight:700}}>FINANCE</span>
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
-              {isManager && <button onClick={()=>setPage("trips")} style={btnS}>📋 Booking</button>}
+              {(isManager || isFinance) && <button onClick={()=>setPage("trips")} style={btnS}>📋 Booking</button>}
               <button onClick={loadAll} style={btnS}>↻ Шинэчлэх</button>
               <button onClick={()=>setCurrentUser(null)} style={{...btnS,color:C.red,borderColor:C.red+"44"}}>Гарах</button>
             </div>
@@ -1412,6 +1465,82 @@ export default function ManagerPlatform() {
   }
 
   /* ═══════════════════════════════════════════
+     RECYCLE BIN (Хогийн сав)
+     ═══════════════════════════════════════════ */
+  if (page === "recycle") return (
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap');
+        * { margin:0; padding:0; box-sizing:border-box; }
+        .fu { animation: fu .4s ease both; }
+        @keyframes fu { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+      `}</style>
+      <div style={{minHeight:"100vh",background:"#FAFAF9",fontFamily:"'Outfit',sans-serif"}}>
+        <div style={{maxWidth:900,margin:"0 auto",padding:"40px 20px 80px"}}>
+          <div className="fu" style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:28}}>
+            <div>
+              <button onClick={()=>setPage("trips")} style={{...btnS,marginBottom:12}}>← Буцах</button>
+              <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:700,color:C.dark}}>🗑 Хогийн сав</h2>
+              <p style={{color:C.muted,fontSize:13,marginTop:4}}>Устгагдсан аялал, нэхэмжлэлүүд энд хадгалагдана. Сэргээх эсвэл бүрмөсөн устгах боломжтой.</p>
+            </div>
+          </div>
+
+          {deletedTrips.length === 0 && deletedInvoices.length === 0 && (
+            <div className="fu" style={{textAlign:"center",padding:"60px 20px",color:C.muted}}>
+              <div style={{fontSize:48,marginBottom:12}}>✨</div>
+              <div style={{fontSize:15,fontWeight:600}}>Хогийн сав хоосон байна</div>
+            </div>
+          )}
+
+          {deletedTrips.length > 0 && (
+            <div className="fu" style={{marginBottom:32}}>
+              <div style={{fontSize:11,fontWeight:700,letterSpacing:".12em",textTransform:"uppercase",color:C.wine,marginBottom:12}}>Устгагдсан аялалууд ({deletedTrips.length})</div>
+              {deletedTrips.map(t => {
+                const invCount = invoices.filter(i => i.tripCode === t.code).length;
+                return (
+                  <div key={t.code} style={{background:"#fff",borderRadius:14,padding:"16px 20px",marginBottom:8,border:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                    <div>
+                      <div style={{fontWeight:700,fontSize:14,color:C.dark}}>{t.code} <span style={{fontSize:12,color:C.muted,fontWeight:400}}>— {t.destName || t.dest}</span></div>
+                      <div style={{fontSize:11,color:C.muted,marginTop:2}}>
+                        Огноо: {t.date} · {invCount} нэхэмжлэл · Устгасан: {t.deletedBy} · {t.deletedAt ? new Date(t.deletedAt).toLocaleDateString("mn-MN") : ""}
+                      </div>
+                    </div>
+                    <div style={{display:"flex",gap:8}}>
+                      <button onClick={()=>restoreTrip(t)} style={{...btnS,color:"#059669",borderColor:"#059669"+"44"}}>♻ Сэргээх</button>
+                      <button onClick={()=>permanentDeleteTrip(t)} style={{...btnS,color:C.red,borderColor:C.red+"44"}}>✕ Бүрмөсөн</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {deletedInvoices.length > 0 && (
+            <div className="fu" style={{animationDelay:".05s"}}>
+              <div style={{fontSize:11,fontWeight:700,letterSpacing:".12em",textTransform:"uppercase",color:C.wine,marginBottom:12}}>Устгагдсан нэхэмжлэлүүд ({deletedInvoices.length})</div>
+              {deletedInvoices.map(inv => (
+                <div key={inv.id} style={{background:"#fff",borderRadius:14,padding:"16px 20px",marginBottom:8,border:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <div>
+                    <div style={{fontWeight:700,fontSize:14,color:C.dark}}>{inv.clientName} <span style={{fontSize:12,color:C.muted,fontWeight:400}}>— {inv.refCode}</span></div>
+                    <div style={{fontSize:11,color:C.muted,marginTop:2}}>
+                      {inv.tripCode} · {fmt(inv.total)} · Устгасан: {inv.deletedBy} · {inv.deletedAt ? new Date(inv.deletedAt).toLocaleDateString("mn-MN") : ""}
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>restoreInvoice(inv)} style={{...btnS,color:"#059669",borderColor:"#059669"+"44"}}>♻ Сэргээх</button>
+                    <button onClick={()=>permanentDeleteInvoice(inv)} style={{...btnS,color:C.red,borderColor:C.red+"44"}}>✕ Бүрмөсөн</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        {saveMsg && <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",padding:"12px 28px",background:saveMsg.includes("✓")?C.green:C.red,color:"#fff",borderRadius:50,fontFamily:"'Outfit'",fontWeight:600,fontSize:13,boxShadow:"0 4px 24px rgba(0,0,0,.2)",zIndex:100}}>{saveMsg}</div>}
+      </div>
+    </>
+  );
+
+  /* ═══════════════════════════════════════════
      SETTINGS (Destination Codes Manager)
      ═══════════════════════════════════════════ */
   if (page === "settings") return (
@@ -1457,7 +1586,7 @@ export default function ManagerPlatform() {
           {/* List */}
           {Object.entries(destCodes).map(([code, info], i) => {
             const tripCount = trips.filter(t => t.dest === code).length;
-            const invCount = invoices.filter(inv => inv.dest === code).length;
+            const invCount = activeInvoices.filter(inv => inv.dest === code).length;
             return (
               <div key={code} className="fu" style={{...cardS,display:"flex",justifyContent:"space-between",alignItems:"center",animationDelay:`${0.08+i*0.03}s`}}>
                 <div style={{display:"flex",alignItems:"center",gap:14}}>
@@ -1813,14 +1942,14 @@ export default function ManagerPlatform() {
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
             {isManager && <button onClick={()=>setPage("approvals")} style={{...btnS,position:"relative"}}>
               ⏳ Батлах
-              {invoices.filter(i=>i.pendingEdit).length > 0 && <span style={{position:"absolute",top:-4,right:-4,width:16,height:16,borderRadius:8,background:C.red,color:"#fff",fontSize:9,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>{invoices.filter(i=>i.pendingEdit).length}</span>}
+              {activeInvoices.filter(i=>i.pendingEdit).length > 0 && <span style={{position:"absolute",top:-4,right:-4,width:16,height:16,borderRadius:8,background:C.red,color:"#fff",fontSize:9,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>{activeInvoices.filter(i=>i.pendingEdit).length}</span>}
             </button>}
             {isManager && <button onClick={()=>setPage("admin")} style={btnS}>👥 Хэрэглэгч</button>}
             {isManager && <button onClick={()=>setPage("settings")} style={btnS}>⚙ Чиглэл</button>}
             <button onClick={()=>setPage("analytics")} style={btnS}>📊 Тайлан</button>
-            {isManager && <button onClick={()=>setPage("finance")} style={{...btnS,color:"#059669",borderColor:"#059669"+"44"}}>💰 Санхүү</button>}
+            {(isManager || isFinance) && <button onClick={()=>setPage("finance")} style={{...btnS,color:"#059669",borderColor:"#059669"+"44"}}>💰 Санхүү</button>}
+            {isManager && <button onClick={()=>setPage("recycle")} style={{...btnS,color:"#6B7280",borderColor:"#D1D5DB",position:"relative"}}>🗑 Хогийн сав{(deletedTrips.length+deletedInvoices.length)>0 && <span style={{position:"absolute",top:-4,right:-4,width:16,height:16,borderRadius:8,background:C.red,color:"#fff",fontSize:9,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>{deletedTrips.length+deletedInvoices.length}</span>}</button>}
             <button onClick={loadAll} style={btnS}>↻ Шинэчлэх</button>
-            {isManager && trips.length === 0 && <button onClick={seedTestData} style={{...btnS,color:"#7C3AED",borderColor:"#7C3AED44"}}>🧪 Тест дата</button>}
             {isManager && <button onClick={()=>setShowNewTrip(true)} style={btnP}>+ Шинэ аялал</button>}
             <button onClick={()=>setCurrentUser(null)} style={{...btnS,color:C.red,borderColor:C.red+"44"}}>Гарах</button>
           </div>
@@ -1845,7 +1974,7 @@ export default function ManagerPlatform() {
               { label:"Зорчигч", value:totalPassengers, sub:totalInfants>0?`${totalInfants} нялх 👶`:"", icon:"👥", color:C.wine, bg:C.winePale },
               { label:"Нийт нэхэмжлэл", value:fmt(totalInvoiced), sub:`${invoices.length} ширхэг`, icon:"📋", color:C.dark, bg:C.cream },
               { label:"Төлсөн", value:fmt(totalPaid), sub:totalInvoiced>0?`${Math.round(totalPaid/totalInvoiced*100)}%`:"", icon:"✅", color:C.green, bg:C.greenBg },
-              { label:"Үлдэгдэл", value:fmt(totalOutstanding), sub:invoices.filter(i=>i.paymentStatus==="pending").length+" хүлээгдэж буй", icon:"⏳", color:totalOutstanding>0?C.red:C.green, bg:totalOutstanding>0?C.redBg:C.greenBg },
+              { label:"Үлдэгдэл", value:fmt(totalOutstanding), sub:activeInvoices.filter(i=>i.paymentStatus==="pending").length+" хүлээгдэж буй", icon:"⏳", color:totalOutstanding>0?C.red:C.green, bg:totalOutstanding>0?C.redBg:C.greenBg },
             ];
             return (
               <div style={{display:"grid",gridTemplateColumns:`repeat(${kpis.length}, 1fr)`,gap:10,marginBottom:20}}>
@@ -1907,12 +2036,12 @@ export default function ManagerPlatform() {
           })()}
 
           {/* Pending approvals for manager */}
-          {isManager && invoices.filter(i=>i.pendingEdit).length > 0 && (
+          {isManager && activeInvoices.filter(i=>i.pendingEdit).length > 0 && (
             <div onClick={()=>setPage("approvals")} style={{marginBottom:16,padding:"14px 20px",background:"#FEF3C7",border:"1px solid #F59E0B44",borderRadius:14,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div style={{display:"flex",alignItems:"center",gap:10}}>
                 <span style={{fontSize:20}}>⏳</span>
                 <div>
-                  <div style={{fontWeight:700,fontSize:13,color:"#92400E"}}>{invoices.filter(i=>i.pendingEdit).length} засвар хүлээгдэж байна</div>
+                  <div style={{fontWeight:700,fontSize:13,color:"#92400E"}}>{activeInvoices.filter(i=>i.pendingEdit).length} засвар хүлээгдэж байна</div>
                   <div style={{fontSize:11,color:"#D97706"}}>Дарж батлах эсвэл татгалзах</div>
                 </div>
               </div>
@@ -2272,6 +2401,7 @@ export default function ManagerPlatform() {
             <div style={{display:"flex",gap:8}}>
               <button onClick={loadAll} style={btnS}>↻ Шинэчлэх</button>
               {trip.status !== "cancelled" && isManager && <button onClick={()=>setShowCancelModal(true)} style={{...btnS,color:"#991B1B",borderColor:"#FECACA"}}>✕ Цуцлах</button>}
+              {isManager && <button onClick={()=>deleteTrip(trip)} style={{...btnS,color:"#fff",background:"#DC2626",borderColor:"#DC2626"}}>🗑 Устгах</button>}
               {trip.status !== "cancelled" && <button onClick={()=>{setEditingInvoice(null);setInvClient("");setInvPhone("");setInvInfant(false);setInvType("package");setInvNotes("");const tm=new Date();tm.setDate(tm.getDate()+1);setInvDueDate(tm.toISOString().split("T")[0]);setInvInstall(false);setInvItems([{id:1,description:`${destInfo.name} аялал`,qty:1,rate:0}]);setPage("new-invoice")}} style={btnP}>+ Нэхэмжлэл нэмэх</button>}
             </div>
           </div>
