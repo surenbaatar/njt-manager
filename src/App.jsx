@@ -1286,7 +1286,7 @@ export default function ManagerPlatform() {
               <span style={{fontSize:9,padding:"2px 8px",borderRadius:10,background:"#059669",color:"#fff",fontWeight:700}}>FINANCE</span>
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
-              {(isAdmin || isFinance) && <button onClick={()=>setPage("trips")} style={btnS}>📋 Booking</button>}
+              {isAdmin && <button onClick={()=>setPage("trips")} style={btnS}>📋 Booking</button>}
               <button onClick={loadAll} style={btnS}>↻ Шинэчлэх</button>
               <button onClick={()=>setCurrentUser(null)} style={{...btnS,color:C.red,borderColor:C.red+"44"}}>Гарах</button>
             </div>
@@ -2000,7 +2000,7 @@ export default function ManagerPlatform() {
             {isAdmin && <button onClick={()=>setPage("admin")} style={btnS}>👥 Хэрэглэгч</button>}
             {isManager && <button onClick={()=>setPage("settings")} style={btnS}>⚙ Чиглэл</button>}
             <button onClick={()=>setPage("analytics")} style={btnS}>📊 Тайлан</button>
-            {(isAdmin || isFinance) && <button onClick={()=>setPage("finance")} style={{...btnS,color:"#059669",borderColor:"#059669"+"44"}}>💰 Санхүү</button>}
+            {isAdmin && <button onClick={()=>setPage("finance")} style={{...btnS,color:"#059669",borderColor:"#059669"+"44"}}>💰 Санхүү</button>}
             {isAdmin && <button onClick={()=>setPage("recycle")} style={{...btnS,color:"#6B7280",borderColor:"#D1D5DB",position:"relative"}}>🗑 Хогийн сав{(deletedTrips.length+deletedInvoices.length)>0 && <span style={{position:"absolute",top:-4,right:-4,width:16,height:16,borderRadius:8,background:C.red,color:"#fff",fontSize:9,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>{deletedTrips.length+deletedInvoices.length}</span>}</button>}
             <button onClick={loadAll} style={btnS}>↻ Шинэчлэх</button>
             {isManager && <button onClick={()=>setShowNewTrip(true)} style={btnP}>+ Шинэ аялал</button>}
