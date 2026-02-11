@@ -101,15 +101,7 @@ export default function ManagerPlatform() {
     try { await supabase.from("app_users").upsert({ id: "default", data: u }); } catch(e) {}
   };
 
-  // Auto-login via URL param: ?user=manager or ?user=booking
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const autoUser = params.get("user");
-    if (autoUser && !currentUser) {
-      const u = users.find(u => u.username === autoUser);
-      if (u) { setCurrentUser(u); if(u.role==="finance") setPage("finance"); }
-    }
-  }, [users]);
+  // Login disabled via URL params for security
 
   const handleLogin = () => {
     const u = users.find(u => u.username === loginUser && u.password === loginPass);
@@ -1912,9 +1904,6 @@ export default function ManagerPlatform() {
           </div>
           {loginError && <div style={{padding:"8px 14px",background:C.redBg,border:`1px solid ${C.redBd}`,borderRadius:8,fontSize:12,color:C.red,marginBottom:16}}>{loginError}</div>}
           <button onClick={handleLogin} style={{width:"100%",padding:"14px",background:C.wine,color:"#fff",border:"none",borderRadius:12,cursor:"pointer",fontFamily:"'Outfit'",fontWeight:700,fontSize:14,letterSpacing:".02em"}}>Нэвтрэх</button>
-          <div style={{marginTop:20,padding:"12px 16px",background:C.cream,borderRadius:10,fontSize:10,color:C.muted,lineHeight:1.7}}>
-            {users.slice(0,3).map(u => <div key={u.username}><b>{u.label}:</b> {u.username} / {u.password}</div>)}
-          </div>
         </div>
       </div>
     </>
