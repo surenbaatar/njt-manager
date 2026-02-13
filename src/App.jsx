@@ -114,6 +114,7 @@ export default function ManagerPlatform() {
   const [page, setPage] = useState("trips"); // "trips" | "dest-trips" | "trip-detail" | "new-invoice" | "analytics" | "settings" | "pdf-preview" | "recycle"
   const [trips, setTrips] = useState([]);
   const [invoices, setInvoices] = useState([]);
+  const [poolPayments, setPoolPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saveMsg, setSaveMsg] = useState("");
   const [selectedTrip, setSelectedTrip] = useState(null);
@@ -208,6 +209,11 @@ export default function ManagerPlatform() {
         }
       }
       setInvoices(iAll);
+      // Load pool payments
+      try {
+        const { data: poolRows } = await supabase.from("pool_payments").select("*").order("created_at", { ascending: false });
+        setPoolPayments((poolRows || []).map(r => ({ ...r.data, id: r.id })));
+      } catch(e) {}
     } catch(e) { console.error("loadAll error:", e); }
     setLoading(false);
   };
@@ -215,6 +221,52 @@ export default function ManagerPlatform() {
   const saveDestCodes = async (newCodes) => {
     setDestCodes(newCodes);
     try { await supabase.from("dest_codes").upsert({ id: "default", data: newCodes }); } catch(e) {}
+  };
+
+  // ── Pool Payments ──
+  const addPoolPayment = async (amount, date, txnDesc) => {
+    const id = "pool-" + Date.now() + "-" + Math.random().toString(36).slice(2,6);
+    const pp = { id, amount: Math.round(amount), date, txnDescription: txnDesc, status: "unassigned", createdBy: currentUser.username, createdByLabel: currentUser.label, createdAt: new Date().toISOString() };
+    try {
+      await supabase.from("pool_payments").upsert({ id, amount: pp.amount, date: pp.date, txn_description: pp.txnDescription, status: "unassigned", created_by: pp.createdBy, created_by_label: pp.createdByLabel, created_at: pp.createdAt, data: pp });
+      setPoolPayments(prev => [pp, ...prev]);
+      setSaveMsg("✓ Pool төлбөр нэмэгдлээ"); setTimeout(()=>setSaveMsg(""),3000);
+    } catch(e) { setSaveMsg("⚠ Алдаа: " + e.message); setTimeout(()=>setSaveMsg(""),5000); }
+  };
+
+  const assignPoolPayment = async (poolId, invoiceId) => {
+    const pp = poolPayments.find(p => p.id === poolId);
+    const inv = invoices.find(i => i.id === invoiceId);
+    if (!pp || !inv) return;
+    // Add payment to invoice
+    const payment = { date: pp.date, amount: pp.amount, by: currentUser.username, byLabel: currentUser.label, note: `Pool: ${pp.txnDescription || ""}`, poolPaymentId: pp.id };
+    const updated = { ...inv };
+    if (!updated.payments) updated.payments = [];
+    updated.payments.push(payment);
+    const totalPaid = updated.payments.filter(p=>!p.reversed).reduce((s,p)=>s+p.amount,0);
+    if (totalPaid >= updated.total) updated.paymentStatus = "paid";
+    else if (totalPaid > 0) updated.paymentStatus = "partial";
+    else updated.paymentStatus = "pending";
+    if (updated.installEnabled && updated.installments?.length) {
+      let rem = totalPaid;
+      updated.installments.forEach(inst => { if (rem >= inst.amount) { inst.paid = true; inst.paidDate = inst.paidDate || new Date().toISOString(); rem -= inst.amount; } else { inst.paid = false; } });
+    }
+    const editHistory = [...(updated.editHistory||[]), { date: new Date().toISOString(), changes: [`Pool төлбөр холбов: ${fmt(pp.amount)} (${currentUser.label})`] }];
+    updated.editHistory = editHistory;
+    try { await saveInv(updated); } catch(e) {}
+    setInvoices(prev => prev.map(i => i.id === inv.id ? updated : i));
+    // Update pool payment status
+    const updPP = { ...pp, status: "assigned", assignedToInvoice: invoiceId, assignedBy: currentUser.username, assignedAt: new Date().toISOString() };
+    try { await supabase.from("pool_payments").update({ status: "assigned", assigned_to_invoice: invoiceId, assigned_by: currentUser.username, assigned_at: updPP.assignedAt, data: updPP }).eq("id", poolId); } catch(e) {}
+    setPoolPayments(prev => prev.map(p => p.id === poolId ? updPP : p));
+    setSaveMsg("✓ Pool төлбөр нэхэмжлэлд холбогдлоо"); setTimeout(()=>setSaveMsg(""),3000);
+  };
+
+  const deletePoolPayment = async (poolId) => {
+    if (!window.confirm("Pool төлбөр устгах уу?")) return;
+    try { await supabase.from("pool_payments").delete().eq("id", poolId); } catch(e) {}
+    setPoolPayments(prev => prev.filter(p => p.id !== poolId));
+    setSaveMsg("✓ Pool төлбөр устгагдлаа"); setTimeout(()=>setSaveMsg(""),3000);
   };
 
   const addDestCode = async () => {
@@ -1514,6 +1566,92 @@ export default function ManagerPlatform() {
               })}
             </div>
           </div>
+
+          {/* ═══ Pool Payments ═══ */}
+          <div style={{maxWidth:1200,margin:"0 auto",padding:"28px 20px 20px"}}>
+            <div className="fu" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,animationDelay:".2s"}}>
+              <div>
+                <div style={{fontSize:11,fontWeight:700,letterSpacing:".12em",textTransform:"uppercase",color:"#7C3AED",marginBottom:4}}>💎 ТОДОРХОЙГҮЙ ТӨЛБӨРҮҮД (Pool)</div>
+                <div style={{fontSize:12,color:C.muted}}>Банкны хуулгаас ирсэн, нэхэмжлэлд холбогдоогүй төлбөрүүд</div>
+              </div>
+              <div style={{fontSize:13,fontWeight:700,color:"#7C3AED"}}>{poolPayments.filter(p=>p.status==="unassigned").length} хүлээгдэж буй</div>
+            </div>
+
+            {/* Add new pool payment */}
+            {(isFinance || isAdmin) && (
+              <div className="fu" style={{background:"#fff",borderRadius:14,border:"1.5px solid #7C3AED44",padding:"16px 20px",marginBottom:16,animationDelay:".22s"}}>
+                <div style={{fontSize:9,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase",color:"#7C3AED",marginBottom:10}}>+ ШИНЭ POOL ТӨЛБӨР НЭМЭХ</div>
+                <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
+                  <div>
+                    <label style={{display:"block",fontSize:9,fontWeight:600,color:C.light,marginBottom:3}}>Дүн (₮)</label>
+                    <input id="pool-amount" type="number" min={1} placeholder="500000" style={{...inp,width:140,padding:"8px 12px",fontSize:12}} />
+                  </div>
+                  <div>
+                    <label style={{display:"block",fontSize:9,fontWeight:600,color:C.light,marginBottom:3}}>Огноо</label>
+                    <input id="pool-date" type="date" defaultValue={new Date().toISOString().split("T")[0]} style={{...inp,width:140,padding:"8px 12px",fontSize:12}} />
+                  </div>
+                  <div style={{flex:1,minWidth:200}}>
+                    <label style={{display:"block",fontSize:9,fontWeight:600,color:C.light,marginBottom:3}}>Гүйлгээний утга</label>
+                    <input id="pool-txn" placeholder="Банкны гүйлгээний утга..." style={{...inp,width:"100%",padding:"8px 12px",fontSize:12}} />
+                  </div>
+                  <button onClick={()=>{
+                    const amt = parseFloat(document.getElementById("pool-amount")?.value);
+                    const date = document.getElementById("pool-date")?.value;
+                    const txn = document.getElementById("pool-txn")?.value;
+                    if (!amt || amt <= 0) { setSaveMsg("⚠ Дүн оруулна уу"); setTimeout(()=>setSaveMsg(""),3000); return; }
+                    if (!date) { setSaveMsg("⚠ Огноо оруулна уу"); setTimeout(()=>setSaveMsg(""),3000); return; }
+                    addPoolPayment(amt, date, txn || "");
+                    document.getElementById("pool-amount").value = "";
+                    document.getElementById("pool-txn").value = "";
+                  }} style={{padding:"8px 20px",background:"#7C3AED",color:"#fff",border:"none",borderRadius:10,cursor:"pointer",fontFamily:"'Outfit'",fontWeight:700,fontSize:12,whiteSpace:"nowrap"}}>
+                    + Нэмэх
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Pool payment list */}
+            {poolPayments.length > 0 && (
+              <div style={{background:"#fff",borderRadius:14,border:`1px solid ${C.border}`,overflow:"hidden"}}>
+                <div style={{display:"grid",gridTemplateColumns:"32px 1fr 140px 120px 140px",padding:"10px 16px",background:"#F5F3FF",fontSize:8.5,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase",color:C.light,borderBottom:`1px solid ${C.border}`}}>
+                  <div>#</div>
+                  <div>Гүйлгээний утга</div>
+                  <div style={{textAlign:"right"}}>Дүн</div>
+                  <div style={{textAlign:"right"}}>Огноо</div>
+                  <div style={{textAlign:"right"}}>Төлөв</div>
+                </div>
+                {poolPayments.map((pp, idx) => {
+                  const assigned = pp.status === "assigned";
+                  const linkedInv = assigned ? invoices.find(i => i.id === pp.assignedToInvoice) : null;
+                  return (
+                    <div key={pp.id} style={{display:"grid",gridTemplateColumns:"32px 1fr 140px 120px 140px",padding:"12px 16px",borderBottom:`1px solid ${C.border}33`,alignItems:"center",opacity:assigned?0.6:1,background:assigned?"#F9FAFB":"#fff"}}>
+                      <div style={{fontSize:11,color:C.light,fontWeight:600}}>{idx+1}</div>
+                      <div>
+                        <div style={{fontSize:12,fontWeight:600,color:assigned?C.muted:C.dark}}>{pp.txnDescription || "—"}</div>
+                        <div style={{fontSize:10,color:C.muted}}>{pp.createdByLabel} · {new Date(pp.createdAt).toLocaleDateString("mn")}</div>
+                      </div>
+                      <div style={{textAlign:"right",fontWeight:700,fontSize:13,color:assigned?"#059669":"#7C3AED"}}>{fmt(pp.amount)}</div>
+                      <div style={{textAlign:"right",fontSize:11,color:C.muted}}>{pp.date}</div>
+                      <div style={{textAlign:"right",display:"flex",gap:4,justifyContent:"flex-end",alignItems:"center"}}>
+                        {assigned ? (
+                          <span style={{fontSize:10,padding:"3px 10px",borderRadius:20,background:"#ECFDF5",color:"#059669",fontWeight:600}}>✓ {linkedInv?.clientName || pp.assignedToInvoice}</span>
+                        ) : (
+                          <>
+                            {isManager && <button onClick={()=>{
+                              const invId = window.prompt("Нэхэмжлэлийн ID оруулна уу (жнь: syx26030101-01)\\n\\nЭсвэл нэхэмжлэлийн жагсаалтаас хайж олоорой.");
+                              if (invId && invId.trim()) assignPoolPayment(pp.id, invId.trim());
+                            }} style={{padding:"4px 12px",background:"#7C3AED",color:"#fff",border:"none",borderRadius:8,cursor:"pointer",fontWeight:700,fontSize:10}}>🔗 Холбох</button>}
+                            {(isFinance || isAdmin) && <button onClick={()=>deletePoolPayment(pp.id)} style={{padding:"4px 8px",background:"#FEE2E2",color:C.red,border:"none",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:10}}>✕</button>}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           {saveMsg && <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",padding:"12px 28px",background:saveMsg.includes("✓") ? "#059669" : C.red,color:"#fff",borderRadius:50,fontFamily:"'Outfit'",fontWeight:600,fontSize:13,boxShadow:"0 4px 24px rgba(0,0,0,.2)",zIndex:100}}>{saveMsg}</div>}
         </div>
       </>
@@ -2575,7 +2713,7 @@ export default function ManagerPlatform() {
                           <div style={{textAlign:"right",fontWeight:700,fontSize:12,color:inv.total-paidAmt>0?C.red:"#059669"}}>{inv.total-paidAmt>0?fmt(inv.total-paidAmt):"✅"}</div>
                           <div style={{textAlign:"center"}}><span style={{...badge(inv.paymentStatus),fontSize:9,padding:"2px 8px"}}>{statusInfo[inv.paymentStatus]?.icon} {inv.paymentStatus==="partial"?Math.round(paidAmt/inv.total*100)+"%":statusInfo[inv.paymentStatus]?.label}</span></div>
                           <div style={{display:"flex",gap:4,justifyContent:"center"}}>
-                            {!inv.pendingEdit && <button onClick={(e)=>{e.stopPropagation();startEditInvoice(inv)}} title="Засах" style={{width:26,height:26,background:C.blue,color:"#fff",border:"none",borderRadius:6,cursor:"pointer",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center"}}>✏️</button>}
+                            {!inv.pendingEdit && (isManager || (isBooking && inv.createdBy === currentUser.username)) && <button onClick={(e)=>{e.stopPropagation();startEditInvoice(inv)}} title="Засах" style={{width:26,height:26,background:C.blue,color:"#fff",border:"none",borderRadius:6,cursor:"pointer",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center"}}>✏️</button>}
                             <button onClick={(e)=>{e.stopPropagation();setSelectedInvoice(inv);setPage("pdf-preview")}} title="PDF" style={{width:26,height:26,background:C.wine,color:"#fff",border:"none",borderRadius:6,cursor:"pointer",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center"}}>📄</button>
                             {isManager && inv.paymentStatus==="pending" && <button onClick={(e)=>{e.stopPropagation();deleteInvoice(inv)}} title="Устгах" style={{width:26,height:26,background:C.red,color:"#fff",border:"none",borderRadius:6,cursor:"pointer",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center"}}>🗑</button>}
                           </div>
