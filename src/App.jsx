@@ -165,7 +165,9 @@ export default function ManagerPlatform() {
   // Invoice form
   const [invClient, setInvClient] = useState("");
   const [invPhone, setInvPhone] = useState("");
-  const [invType, setInvType] = useState("package"); // "flight" | "ground" | "package"
+  const [invType, setInvType] = useState("package");
+  const [invBank, setInvBank] = useState("");
+  const [invIban, setInvIban] = useState("");
   const [invItems, setInvItems] = useState([{ id: 1, description: "", qty: 1, rate: 0 }]);
   const [invNotes, setInvNotes] = useState("");
   const [invDueDate, setInvDueDate] = useState("");
@@ -416,7 +418,8 @@ export default function ManagerPlatform() {
     const emptyItem = invItems.find(i => !i.description?.trim() || !i.qty || i.qty <= 0 || !i.rate || i.rate <= 0);
     if (emptyItem) { setSaveMsg("⚠ Үйлчилгээ, тоо, үнэ бүрэн бөглөнө үү"); setTimeout(()=>setSaveMsg(""),3000); return; }
     const trip = selectedTrip;
-    const bankInfo = ALL_BANKS[trip.bank] || Object.values(ALL_BANKS)[0];
+    const selectedBank = invBank || trip.bank;
+    const bankInfo = ALL_BANKS[selectedBank] || Object.values(ALL_BANKS)[0];
     const total = invItems.reduce((s, i) => s + i.qty * i.rate, 0);
     const txnValue = [trip.code, invClient, invPhone].filter(Boolean).join(" / ");
     let instArr = [];
@@ -443,7 +446,7 @@ export default function ManagerPlatform() {
       id: refCode, refCode, tripCode: trip.code, dest: trip.dest, destName: trip.destName,
       invDate: new Date().toISOString().split("T")[0], dueDate: invDueDate,
       clientName: invClient, clientPhone: invPhone, isInfant: invInfant, invType,
-      bankName: bankInfo.bank, bankIban: bankInfo.iban,
+      bankName: bankInfo.bank, bankIban: invIban || bankInfo.iban,
       items: invItems.map(i => ({ description: i.description || `${trip.destName} аялал`, qty: i.qty, rate: i.rate, type: i.type || "package" })),
       total, notes: invNotes, installEnabled: invInstall,
       installments: instArr, txnValue: [refCode, invClient, invPhone].filter(Boolean).join(" / "), savedAt: new Date().toISOString(), paymentStatus: "pending",
@@ -453,7 +456,7 @@ export default function ManagerPlatform() {
     setInvoices(prev => [inv, ...prev]);
     // Reset form
     setInvClient(""); setInvPhone(""); setInvInfant(false); setInvType("package"); setInvItems([{ id: 1, description: "", qty: 1, rate: 0 }]);
-    setInvNotes(""); setInvDueDate(""); setInvInstall(false); setInvInstallments([]);
+    setInvNotes(""); setInvDueDate(""); setInvInstall(false); setInvInstallments([]); setInvBank("");setInvIban("");
     setPage("trip-detail");
     setSaveMsg("✓ Нэхэмжлэл бүртгэгдлээ!"); setTimeout(()=>setSaveMsg(""),3000);
   };
@@ -624,6 +627,8 @@ export default function ManagerPlatform() {
     setInvInstall(inv.installEnabled || false);
     setInvInstallCount(inv.installments?.length || 2);
     setInvInstallments(inv.installments?.map(i => ({ pct: i.pct || 0, date: i.date || "" })) || []);
+    setInvBank(inv.bankName || "");
+    setInvIban(inv.bankIban || "");
     setPage("new-invoice");
   };
 
@@ -666,11 +671,17 @@ export default function ManagerPlatform() {
     if (inv.clientPhone !== invPhone) editEntry.changes.push(`Утас: ${inv.clientPhone} → ${invPhone}`);
     if (inv.total !== total) editEntry.changes.push(`Дүн: ${fmt(inv.total)} → ${fmt(total)}`);
     if (inv.notes !== invNotes) editEntry.changes.push(`Тэмдэглэл өөрчлөгдсөн`);
+    const newBankName = invBank || inv.bankName;
+    const newBankInfo = ALL_BANKS[newBankName] || { bank: newBankName, iban: inv.bankIban };
+    const newIban = invIban || newBankInfo.iban;
+    if (inv.bankName !== newBankName) editEntry.changes.push(`Банк: ${inv.bankName} → ${newBankName}`);
+    if (inv.bankIban !== newIban) editEntry.changes.push(`IBAN өөрчлөгдсөн`);
     const editHistory = [...(inv.editHistory || []), ...(editEntry.changes.length > 0 ? [editEntry] : [])];
 
     const updated = {
       ...inv,
       refCode, clientName: invClient, clientPhone: invPhone, isInfant: invInfant, invType,
+      bankName: newBankInfo.bank, bankIban: newIban,
       items: invItems, total, notes: invNotes, dueDate: invDueDate,
       txnValue, installEnabled: invInstall, installments: instArr,
       editHistory,
@@ -2593,7 +2604,7 @@ export default function ManagerPlatform() {
               <button onClick={loadAll} style={btnS}>↻ Шинэчлэх</button>
               {trip.status !== "cancelled" && isManager && <button onClick={()=>setShowCancelModal(true)} style={{...btnS,color:"#991B1B",borderColor:"#FECACA"}}>✕ Цуцлах</button>}
               {isManager && <button onClick={()=>deleteTrip(trip)} style={{...btnS,color:"#fff",background:"#DC2626",borderColor:"#DC2626"}}>🗑 Устгах</button>}
-              {trip.status !== "cancelled" && <button onClick={()=>{setEditingInvoice(null);setInvClient("");setInvPhone("");setInvInfant(false);setInvType("package");setInvNotes("");const tm=new Date();tm.setDate(tm.getDate()+1);setInvDueDate(tm.toISOString().split("T")[0]);setInvInstall(false);setInvItems([{id:1,description:`${destInfo.name} аялал`,qty:1,rate:0}]);setPage("new-invoice")}} style={btnP}>+ Нэхэмжлэл нэмэх</button>}
+              {trip.status !== "cancelled" && <button onClick={()=>{setEditingInvoice(null);setInvClient("");setInvPhone("");setInvInfant(false);setInvType("package");setInvNotes("");const tm=new Date();tm.setDate(tm.getDate()+1);setInvDueDate(tm.toISOString().split("T")[0]);setInvInstall(false);setInvBank("");setInvIban("");setInvItems([{id:1,description:`${destInfo.name} аялал`,qty:1,rate:0}]);setPage("new-invoice")}} style={btnP}>+ Нэхэмжлэл нэмэх</button>}
             </div>
           </div>
 
@@ -2653,7 +2664,7 @@ export default function ManagerPlatform() {
               <div style={{textAlign:"center",padding:60,color:C.light}}>
                 <div style={{fontSize:48,marginBottom:12}}>📄</div>
                 <div style={{fontSize:14}}>Нэхэмжлэл бүртгэгдээгүй</div>
-                <button onClick={()=>{setEditingInvoice(null);setInvClient("");setInvPhone("");setInvInfant(false);setInvType("package");setInvNotes("");const tm=new Date();tm.setDate(tm.getDate()+1);setInvDueDate(tm.toISOString().split("T")[0]);setInvInstall(false);setInvItems([{id:1,description:`${destInfo.name} аялал`,qty:1,rate:0}]);setPage("new-invoice")}} style={{...btnP,marginTop:16}}>+ Нэхэмжлэл нэмэх</button>
+                <button onClick={()=>{setEditingInvoice(null);setInvClient("");setInvPhone("");setInvInfant(false);setInvType("package");setInvNotes("");const tm=new Date();tm.setDate(tm.getDate()+1);setInvDueDate(tm.toISOString().split("T")[0]);setInvInstall(false);setInvBank("");setInvIban("");setInvItems([{id:1,description:`${destInfo.name} аялал`,qty:1,rate:0}]);setPage("new-invoice")}} style={{...btnP,marginTop:16}}>+ Нэхэмжлэл нэмэх</button>
               </div>
             )}
 
@@ -2854,7 +2865,7 @@ export default function ManagerPlatform() {
   if (page === "new-invoice" && selectedTrip) {
     const trip = selectedTrip;
     const destInfo = DEST_CODES[trip.dest] || { color: C.wine, bg: C.winePale, name: trip.destName || trip.dest };
-    const bankInfo = ALL_BANKS[trip.bank] || Object.values(ALL_BANKS)[0];
+    const bankInfo = ALL_BANKS[invBank || trip.bank] || Object.values(ALL_BANKS)[0];
     const invTotal = invItems.reduce((s, i) => s + i.qty * i.rate, 0);
     return (
       <>
@@ -2897,15 +2908,16 @@ export default function ManagerPlatform() {
               </div>
             </div>
 
-            {/* Bank info (read-only) */}
+            {/* Bank info (editable) */}
             <div className="fu" style={{...cardS,background:`linear-gradient(135deg, ${C.winePale}, ${C.goldLight})`,animationDelay:".07s"}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
                 <div style={{width:3,height:18,background:C.gold,borderRadius:2}}/>
                 <h3 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:700,color:C.dark}}>Банкны мэдээлэл</h3>
+                {(invBank && invBank !== trip.bank) && <span style={{fontSize:9,padding:"2px 8px",borderRadius:10,background:"#FEF3C7",color:"#92400E",fontWeight:600}}>Өөрчилсөн</span>}
               </div>
               <div className="rg" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
-                <div><label style={lbl}>Банк</label><div style={{...inp,background:"#fff",border:`1px solid ${C.border}`,fontWeight:600,cursor:"default"}}>{bankInfo.bank}</div></div>
-                <div><label style={lbl}>IBAN</label><div style={{...inp,background:"#fff",border:`1px solid ${C.border}`,fontWeight:600,cursor:"default",fontFamily:"monospace",letterSpacing:".04em"}}>{bankInfo.iban}</div></div>
+                <div><label style={lbl}>Банк</label><select value={invBank || selectedTrip?.bank || ""} onChange={e=>{setInvBank(e.target.value);setInvIban((ALL_BANKS[e.target.value]||{}).iban||"")}} style={{...inp,cursor:"pointer"}}>{Object.keys(ALL_BANKS).map(b=><option key={b} value={b}>{b}</option>)}</select></div>
+                <div><label style={lbl}>IBAN / Дансны дугаар</label><input value={invIban || (ALL_BANKS[invBank || selectedTrip?.bank] || Object.values(ALL_BANKS)[0]).iban} onChange={e=>setInvIban(e.target.value)} style={{...inp,fontFamily:"monospace",letterSpacing:".04em"}} /></div>
                 <div><label style={lbl}>Хүлээн авагч</label><div style={{...inp,background:"#fff",border:`1px solid ${C.border}`,fontWeight:600,cursor:"default"}}>{COMPANY}</div></div>
               </div>
               <div style={{marginTop:10,padding:"10px 14px",background:C.goldLight,borderRadius:8}}>
